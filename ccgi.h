@@ -18,21 +18,11 @@ char *CGI_encode_url(const char *p, const char *keep);
 
 char *CGI_encode_entity(const char *p);
 
-char *CGI_encode_base64(const void *p, int len);
-
-void *CGI_decode_base64(const char *p, int *len);
-
-char *CGI_encode_hex(const void *p, int len);
-
-void *CGI_decode_hex(const char *p, int *len);
-
 char *CGI_encrypt(const void *p, int len, const char *password);
 
 void *CGI_decrypt(const char *p, int *len, const char *password);
 
 char *CGI_encode_query(const char *keep, ...);
-
-char *CGI_encode_varlist(CGI_varlist *v, const char *keep);
 
 CGI_varlist *CGI_decode_query(CGI_varlist *v, const char *query);
 
