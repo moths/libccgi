@@ -341,61 +341,82 @@ readline(strbuf *line, FILE *in) {
     return savechar(line, i, 0);  /* null terminate */
 }
 
-/*
- * copyvalue() reads bytes from open file "in", which contains
- * "multipart/form-data", delimited by "boundary".  We read
- * bytes until we encounter the boundary.  If the flag "wantfile"
- * is true then we write the bytes (minus the boundary) to open
- * file pointer "out" (or discard the output if "out" is NULL).
- * Otherwise we copy the bytes to "value".
- */
-
 static strbuf *
-copyvalue(const char *boundary, FILE *in, const int wantfile,
+copyvaluefast(const char *boundary, FILE *in, const int wantfile,
     strbuf *value, FILE *out)
 {
-    int c, i, k, matched;
-
+    int i, k, matched;
+    char c;
+    char *buf, *obuf;
+    size_t count;
+    size_t n;
+#define BUF_SZ 1048576
     matched = k = 0;
+    buf = malloc(BUF_SZ);
+    obuf = malloc(BUF_SZ);
+    size_t ocount = 0;
 
-    while ((c = getc(in)) != EOF) {
+    while (1) {
+        count = fread(buf, 1, BUF_SZ, in);
+        for (n = 0; n < count; n++) {
+            c = buf[n];
+            /*
+             * If we partially match the boundary, then we copy the
+             * entire matching prefix to the output.  We do not need to
+             * backtrack and look for shorter matching prefixes because
+             * they cannot exist.  The boundary always begins with '\r'
+             * and never contains another '\r'.
+             */
 
-        /*
-         * If we partially match the boundary, then we copy the
-         * entire matching prefix to the output.  We do not need to
-         * backtrack and look for shorter matching prefixes because
-         * they cannot exist.  The boundary always begins with '\r'
-         * and never contains another '\r'.
-         */
+            if (matched > 0 && c != boundary[matched]) {
+                for (i = 0; i < matched; i++) {
+                    if (wantfile == 0) {
+                        value = savechar(value, k++, boundary[i]);
+                    }
+                    else if (out != 0) {
+                        obuf[ocount++] = boundary[i];
+                        if (ocount >= BUF_SZ) {
+                            if (fwrite(obuf, 1, BUF_SZ, out) != BUF_SZ)
+                                exit(1);
+                            else
+                                ocount = 0;
+                        }
 
-        if (matched > 0 && c != boundary[matched]) {
-            for (i = 0; i < matched; i++) {
-                if (wantfile == 0) {
-                    value = savechar(value, k++, boundary[i]);
+                        //fputc(boundary[i], out);
+                    }
                 }
-                else if (out != 0) {
-                    fputc(boundary[i], out);
+                matched = 0;
+            }
+
+            /* check for full or partial boundary match */
+
+            if (c == boundary[matched]) {
+                if (boundary[++matched] == 0) {
+                    break;   /* full match */
+                }
+                continue;    /* partial match */
+            }
+
+            /* no match, so copy byte to output */
+
+            if (wantfile == 0) {
+                value = savechar(value, k++, c);
+            }
+            else if (out != 0) {
+                obuf[ocount++] = c;
+                if (ocount >= BUF_SZ) {
+                    if (fwrite(obuf, 1, BUF_SZ, out) != BUF_SZ)
+                        exit(1);
+                    else
+                        ocount = 0;
                 }
             }
-            matched = 0;
         }
+        if (count < BUF_SZ) {
+            if (ocount)
+                fwrite(obuf, 1, ocount, out);
 
-        /* check for full or partial boundary match */
-
-        if (c == boundary[matched]) {
-            if (boundary[++matched] == 0) {
-                break;   /* full match */
-            }
-            continue;    /* partial match */
-        }
-
-        /* no match, so copy byte to output */
-
-        if (wantfile == 0) {
-            value = savechar(value, k++, c);
-        }
-        else if (out != 0) {
-            fputc(c, out);
+            break;
         }
     }
     if (wantfile == 0) {
@@ -526,7 +547,7 @@ read_multipart(CGI_varlist *v, const char *template) {
                     out = fdopen(fd, "wb");
                 }
             }
-            copyvalue(boundary, stdin, 1, 0, out);
+            copyvaluefast(boundary, stdin, 1, 0, out);
             if (out != 0) {
                 fclose(out);
                 v = CGI_add_var(v, name, localname);
@@ -534,7 +555,7 @@ read_multipart(CGI_varlist *v, const char *template) {
             }
         }
         else {
-            value = copyvalue(boundary, stdin, 0, value, 0);
+            value = copyvaluefast(boundary, stdin, 0, value, 0);
             v = CGI_add_var(v, name, value->str);
         }
 
